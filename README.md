@@ -245,14 +245,3 @@ Add these only when needed:
 ## 📜 License
 
 MIT
-
-```
-
----
-
-## Optional small upgrades (if you want later)
-
-- add a simple ASCII diagram at the top
-- add badges (Docker / Ansible / License)
-- add “Who this is for / not for” section
-
