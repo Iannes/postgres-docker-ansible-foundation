@@ -1,0 +1,46 @@
+# =============================================================================
+# SSH Hardening Drop-in Configuration
+# /etc/ssh/sshd_config.d/99-hardened.conf
+# =============================================================================
+# Managed by Ansible (role: common). Do not edit manually — changes will be
+# overwritten on the next Ansible run.
+#
+# This file is loaded after /etc/ssh/sshd_config via the Include directive
+# that Ubuntu adds by default. Settings here take precedence over the base
+# config.
+# =============================================================================
+
+# Listen on the configured port.
+# If changing from 22 to a non-default port, update cloud provider firewalls
+# and UFW (firewall role) BEFORE running the playbook, or you will lose access.
+Port {{ ssh_port }}
+
+# Never allow root login. The deploy user with sudo is the only admin path.
+PermitRootLogin no
+
+# Require public key authentication. Password authentication is disabled.
+# This eliminates brute-force password attacks entirely.
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+
+# Restrict SSH access to the listed users only.
+# Other OS users cannot log in via SSH even if they have valid keys.
+AllowUsers {{ ssh_allowed_users | join(' ') }}
+
+# Drop unauthenticated connections quickly to reduce exposure window.
+MaxAuthTries     {{ ssh_max_auth_tries }}
+LoginGraceTime   {{ ssh_login_grace_time }}
+
+# Disable features not needed for this deployment.
+X11Forwarding    no
+PrintMotd        no
+PermitEmptyPasswords no
+PermitUserEnvironment no
+AllowAgentForwarding yes   # needed for SSH agent forwarding if operator requires it
+AllowTcpForwarding yes     # needed for SSH tunnel access to PostgreSQL
+
+# Use modern, secure algorithms. Ubuntu 24.04 defaults are already strong;
+# this makes the policy explicit.
+# Re-evaluate if connecting from older clients is required.
+Protocol 2

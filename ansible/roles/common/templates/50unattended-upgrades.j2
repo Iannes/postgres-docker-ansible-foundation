@@ -1,0 +1,51 @@
+// =============================================================================
+// Unattended Upgrades — Main Configuration
+// /etc/apt/apt.conf.d/50unattended-upgrades
+// =============================================================================
+// Managed by Ansible (role: common). Do not edit manually.
+//
+// Only security-origin packages are upgraded automatically.
+// Dist-upgrades, PostgreSQL version upgrades, and kernel changes (other than
+// security patches) are excluded or handled manually.
+// =============================================================================
+
+Unattended-Upgrade::Allowed-Origins {
+    // Ubuntu security updates only. Not all updates — just security patches.
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+
+// Packages to never auto-upgrade, regardless of origin.
+// PostgreSQL is managed manually: see docs/upgrade-postgres.md
+Unattended-Upgrade::Package-Blacklist {
+    "postgresql*";
+    "docker-ce*";
+    "containerd*";
+};
+
+// Remove unused auto-dependencies after upgrades.
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+
+// Remove unused kernel packages (but not the running kernel).
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+
+{% if unattended_upgrades_auto_reboot %}
+// Reboot automatically if required by an upgrade (e.g. kernel security patch).
+// Happens at a low-traffic time. Ensure your pipeline handles restarts gracefully.
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "{{ unattended_upgrades_auto_reboot_time }}";
+{% else %}
+Unattended-Upgrade::Automatic-Reboot "false";
+{% endif %}
+
+{% if unattended_upgrades_email != "" %}
+// Send email on upgrade errors. Requires a working MTA (postfix or similar).
+Unattended-Upgrade::Mail "{{ unattended_upgrades_email }}";
+Unattended-Upgrade::MailReport "on-change";
+{% endif %}
+
+// Write upgrade results to syslog.
+Unattended-Upgrade::SyslogEnable "true";
+Unattended-Upgrade::SyslogFacility "daemon";

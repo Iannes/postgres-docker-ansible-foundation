@@ -1,0 +1,130 @@
+---
+# =============================================================================
+# Smart Market — Non-Secret Group Variables
+# =============================================================================
+# All values here are non-sensitive and safe to commit.
+# Sensitive values (IPs, passwords, keys) belong in vault.yml (git-ignored).
+#
+# To override a value for a specific host, create a host_vars/<hostname>/vars.yml
+# file with the overriding values.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# System
+# -----------------------------------------------------------------------------
+
+# Target Ubuntu release. Used to assert correct OS in playbooks.
+target_ubuntu_codename: noble   # Ubuntu 24.04 LTS
+
+# Timezone for the server. Use a TZ database name.
+# https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+timezone: UTC
+
+
+# -----------------------------------------------------------------------------
+# Deploy user
+# -----------------------------------------------------------------------------
+
+# OS user created by bootstrap.yml and used for all Ansible operations.
+# This user has passwordless sudo. SSH access requires a valid key.
+deploy_user: deploy
+
+# Path to the SSH private key on the CONTROL MACHINE (your laptop / CI).
+# This key corresponds to vault_deploy_ssh_pubkey (stored in vault.yml).
+# Use an absolute path or a path relative to your home directory.
+ansible_ssh_key_path: "~/.ssh/smartmarket_deploy"
+
+
+# -----------------------------------------------------------------------------
+# SSH
+# -----------------------------------------------------------------------------
+
+# SSH port. Change from 22 to reduce automated scan noise (optional but
+# recommended). If you change this, update your cloud provider's firewall
+# before running site.yml, or you will lock yourself out.
+# Also update UFW: the firewall role opens {{ ssh_port }} automatically.
+ssh_port: 22
+
+# OS users permitted to log in via SSH. The deploy user is always included.
+# Add additional users only if strictly necessary.
+ssh_allowed_users:
+  - "{{ deploy_user }}"
+
+# Maximum authentication attempts before the connection is dropped.
+ssh_max_auth_tries: 3
+
+# Seconds before an unauthenticated connection is closed.
+ssh_login_grace_time: 30
+
+
+# -----------------------------------------------------------------------------
+# Unattended upgrades
+# -----------------------------------------------------------------------------
+
+# Apply security updates automatically. Only security-origin packages are
+# upgraded. dist-upgrades and kernel upgrades require manual intervention.
+unattended_upgrades_enabled: true
+
+# Automatically reboot if an upgrade requires it (e.g. kernel update).
+# The reboot happens at the specified time to minimise disruption.
+unattended_upgrades_auto_reboot:      true
+unattended_upgrades_auto_reboot_time: "02:00"
+
+# Send email notifications on upgrade errors. Requires a working MTA.
+# Leave empty to disable.
+unattended_upgrades_email: ""
+
+
+# -----------------------------------------------------------------------------
+# fail2ban
+# -----------------------------------------------------------------------------
+
+# Maximum failed auth attempts before an IP is banned.
+fail2ban_maxretry: 3
+
+# Duration (seconds) an IP remains banned. 3600 = 1 hour.
+fail2ban_bantime: 3600
+
+# Window (seconds) within which failed attempts are counted. 600 = 10 minutes.
+fail2ban_findtime: 600
+
+
+# -----------------------------------------------------------------------------
+# Docker
+# -----------------------------------------------------------------------------
+
+# Docker apt packages to install. Pin versions if you need strict control;
+# these package names pull the latest available from the Docker apt repository.
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# Docker data root. Default is /var/lib/docker. Change only if you have a
+# dedicated volume for Docker data (recommended for production).
+# docker_data_root: /var/lib/docker
+
+
+# -----------------------------------------------------------------------------
+# Smart Market application deployment (Phase 3)
+# -----------------------------------------------------------------------------
+
+# Root directory for all Smart Market application files on the server.
+# Contains .env (mode 600), Compose files, initdb scripts, and backups.
+smartmarket_app_dir: /opt/smartmarket
+
+# PostgreSQL image tag. Pinned to a minor version — never use 'latest'.
+# To upgrade: update this value, test locally, then run the smartmarket role.
+postgres_image_tag: "16.3"
+
+# PostgreSQL database and superuser name. Non-sensitive; safe to commit.
+# The password lives in vault.yml as vault_postgres_password.
+postgres_db:   smartmarket
+postgres_user: postgres
+
+# Number of pg_dump backup files to retain locally under smartmarket_app_dir/backups/.
+# Files beyond this count are rotated by scripts/backup.sh.
+backup_retention_count: 7

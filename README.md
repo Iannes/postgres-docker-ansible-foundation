@@ -22,7 +22,8 @@ This is intended for serious single-node deployments where reliability and clari
 
 This setup is used in production for:
 
-- Scoop — [https://scoopgr.netlify.app/]("https://scoopgr.netlify.app/")
+- Scoop — [https://scoopgr.netlify.app/](https://scoopgr.netlify.app/)
+  Pipeline-driven product aggregation system
 
 The application uses this repository as its PostgreSQL infrastructure foundation.
 

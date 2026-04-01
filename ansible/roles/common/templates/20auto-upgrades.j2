@@ -1,0 +1,18 @@
+// =============================================================================
+// Apt Periodic — Unattended Upgrades Trigger
+// /etc/apt/apt.conf.d/20auto-upgrades
+// =============================================================================
+// Managed by Ansible (role: common). Do not edit manually.
+//
+// Controls how often apt runs automatic updates and unattended-upgrades.
+// Values are in days. "1" means daily.
+// =============================================================================
+
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+{% if unattended_upgrades_enabled %}
+APT::Periodic::Unattended-Upgrade "1";
+{% else %}
+APT::Periodic::Unattended-Upgrade "0";
+{% endif %}

@@ -1,0 +1,123 @@
+---
+# =============================================================================
+# Smart Market — Bootstrap Playbook
+# =============================================================================
+# Runs ONCE against a fresh VPS before site.yml can be used.
+#
+# PURPOSE
+#   Creates the non-root deploy user, installs its SSH public key, and grants
+#   it passwordless sudo so that all subsequent Ansible runs work without
+#   needing the root credential.
+#
+# ASSUMPTIONS
+#   - You have initial SSH access as root (or cloud provider's initial user,
+#     e.g. 'ubuntu' on AWS). Pass -e ansible_user=ubuntu for non-root initial
+#     access.
+#   - vault_deploy_ssh_pubkey is set (from Ansible Vault).
+#   - The host is reachable on the expected SSH port (22 for fresh VPS).
+#
+# USAGE
+#   ansible-playbook \
+#     -i inventories/production/hosts.yml \
+#     --user root \
+#     --ask-pass \
+#     --ssh-extra-args='-o StrictHostKeyChecking=accept-new' \
+#     bootstrap.yml
+#
+#   For key-based initial access (no --ask-pass):
+#   ansible-playbook \
+#     -i inventories/production/hosts.yml \
+#     --user root \
+#     --private-key ~/.ssh/hetzner_bootstrap \
+#     --ssh-extra-args='-o StrictHostKeyChecking=accept-new' \
+#     bootstrap.yml
+#
+# AFTER BOOTSTRAP
+#   Run site.yml as the deploy user (no --user or --ask-pass needed; the
+#   inventory defines ansible_user = deploy and SSH key auth is used).
+#
+# SECURITY NOTE
+#   This playbook sets NOPASSWD sudo for the deploy user. This is a deliberate
+#   tradeoff: it allows Ansible to run non-interactively without a sudo password
+#   prompt. The attack surface is bounded by SSH key-only auth (enforced by
+#   site.yml/common role). A successful attacker would need the private key AND
+#   knowledge of this sudo grant — and at that point, the server is compromised
+#   regardless. Document this decision and revisit if the threat model changes.
+# =============================================================================
+
+- name: Bootstrap — first-run VPS setup
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - group_vars/all/vars.yml
+
+  tasks:
+
+    - name: Verify target is Ubuntu
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "Ubuntu"
+        fail_msg: >
+          This playbook is designed for Ubuntu. Found: {{ ansible_distribution }}.
+          Adjust the playbook or use a supported OS.
+        success_msg: "Ubuntu {{ ansible_distribution_version }} confirmed."
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure sudo is installed
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+
+    - name: Create deploy user
+      ansible.builtin.user:
+        name:         "{{ deploy_user }}"
+        shell:        /bin/bash
+        create_home:  true
+        state:        present
+        comment:      "Smart Market deploy user (Ansible-managed)"
+
+    - name: Add deploy user to sudo group
+      ansible.builtin.user:
+        name:   "{{ deploy_user }}"
+        groups: sudo
+        append: true
+
+    - name: Grant deploy user passwordless sudo (required for Ansible)
+      ansible.builtin.copy:
+        dest:    "/etc/sudoers.d/{{ deploy_user }}"
+        content: "{{ deploy_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        owner:   root
+        group:   root
+        mode:    "0440"
+        validate: /usr/sbin/visudo -cf %s
+
+    - name: Set authorized SSH key for deploy user
+      ansible.builtin.authorized_key:
+        user:      "{{ deploy_user }}"
+        key:       "{{ vault_deploy_ssh_pubkey }}"
+        state:     present
+        exclusive: false
+        # exclusive: false preserves any existing authorized keys.
+        # Set to true if you want this key to be the ONLY one allowed.
+
+    - name: Ensure .ssh directory has correct permissions
+      ansible.builtin.file:
+        path:  "/home/{{ deploy_user }}/.ssh"
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode:  "0700"
+        state: directory
+
+    - name: Bootstrap complete summary
+      ansible.builtin.debug:
+        msg:
+          - "Bootstrap complete for: {{ inventory_hostname }}"
+          - "Deploy user '{{ deploy_user }}' created with SSH key and passwordless sudo."
+          - "Next step: run site.yml as the deploy user."
+          - "  ansible-playbook -i inventories/production/hosts.yml site.yml"

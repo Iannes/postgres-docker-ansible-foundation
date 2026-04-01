@@ -1,0 +1,40 @@
+# =============================================================================
+# Smart Market — Production Compose Overlay
+# =============================================================================
+# Extends docker-compose.yml for production deployment on the VPS.
+# Used exclusively by the smartmarket systemd unit — never run by hand.
+#
+# How it is used (managed by Ansible → smartmarket.service.j2):
+#   docker compose \
+#     --project-name smartmarket \
+#     --env-file /opt/smartmarket/.env \
+#     -f /opt/smartmarket/docker/compose/docker-compose.yml \
+#     -f /opt/smartmarket/docker/compose/docker-compose.prod.yml \
+#     up --detach --wait
+#
+# What this overlay does vs the base
+# ------------------------------------
+# restart     Explicitly sets unless-stopped. The base already sets this,
+#             but the override file (docker-compose.override.yml) changes it to
+#             on-failure for local dev. Deploying this file — and NOT the
+#             override — ensures production restart behaviour is correct.
+#
+# ports       Absent. No port is published. PostgreSQL is accessible only via:
+#               - the smartmarket_net Docker bridge (sibling containers)
+#               - SSH tunnel from an authorised operator
+#             Docker + UFW interaction is not a concern here because no port
+#             is published and nothing in this stack has public exposure.
+#             If a future service requires a published port, that decision
+#             must explicitly account for the Docker + UFW iptables bypass
+#             documented in docs/deploy-production.md.
+#
+# logging     Inherits json-file / 10m / 3 files from the base. No change.
+#
+# healthcheck Inherits from the base. Drives the --wait flag in ExecStart.
+# =============================================================================
+
+services:
+  postgres:
+    restart: unless-stopped
+    # No ports: block — production PostgreSQL is never published publicly.
+    # Operator access is via SSH tunnel. See docs/operations.md.

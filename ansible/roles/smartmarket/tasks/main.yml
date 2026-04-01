@@ -1,0 +1,244 @@
+---
+# =============================================================================
+# Role: smartmarket
+# =============================================================================
+# Deploys the Smart Market PostgreSQL stack on a hardened Ubuntu VPS.
+# Requires: common, firewall, and docker roles applied first.
+#
+# Responsibilities:
+#   1. Create application directory layout under /opt/smartmarket/
+#   2. Deploy Docker Compose files (verbatim from repo — no prod drift)
+#   3. Deploy initdb bootstrap scripts (read-only, bootstrap-only)
+#   4. Template and deploy /opt/smartmarket/.env from Ansible Vault
+#      (mode 600 — deployment plumbing, not a secrets vault)
+#   5. Deploy and enable the smartmarket systemd service unit
+#   6. Start the stack and verify PostgreSQL health
+#
+# Idempotency:
+#   Safe to re-run. File deployments use copy/template with checksum
+#   comparison; nothing changes if files are already up to date.
+#   Re-running after a credential rotation will update .env and restart
+#   the stack via the handler.
+#
+# Security decisions:
+#   - .env is mode 600, owned by the deploy user, never world-readable
+#   - PostgreSQL is never published publicly (no ports: in prod overlay)
+#   - initdb scripts are deployed read-only (:ro volume mount)
+#   - systemd unit runs as the deploy user, not root
+#   - docker compose down (without -v) never destroys the data volume;
+#     ExecStop uses 'stop', not 'down', to be explicit about this
+# =============================================================================
+
+
+# ---------------------------------------------------------------------------
+# 1. Directory layout
+# ---------------------------------------------------------------------------
+
+- name: Create application root directory
+  ansible.builtin.file:
+    path:  "{{ smartmarket_app_dir }}"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode:  "0750"
+    state: directory
+  tags: smartmarket, directories
+
+- name: Create Compose directory
+  ansible.builtin.file:
+    path:  "{{ smartmarket_app_dir }}/docker/compose"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode:  "0750"
+    state: directory
+  tags: smartmarket, directories
+
+- name: Create initdb directory
+  ansible.builtin.file:
+    path:  "{{ smartmarket_app_dir }}/docker/postgres/initdb"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode:  "0750"
+    state: directory
+  tags: smartmarket, directories
+
+- name: Create backups directory
+  ansible.builtin.file:
+    path:  "{{ smartmarket_app_dir }}/backups"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode:  "0750"
+    state: directory
+  tags: smartmarket, directories
+
+
+# ---------------------------------------------------------------------------
+# 2. Deploy Docker Compose files
+# ---------------------------------------------------------------------------
+# Files are copied verbatim from the repository. No Jinja2 templating is
+# applied — these files use ${VAR} syntax that Docker Compose evaluates at
+# runtime from the .env file. Keeping them identical to the local files is
+# a deliberate parity decision.
+
+- name: Deploy Compose base file
+  ansible.builtin.copy:
+    src:   "{{ playbook_dir }}/../docker/compose/docker-compose.yml"
+    dest:  "{{ smartmarket_app_dir }}/docker/compose/docker-compose.yml"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode:  "0640"
+  notify: Reload and restart smartmarket
+  tags: smartmarket, compose
+
+- name: Deploy Compose production overlay
+  ansible.builtin.copy:
+    src:   "{{ playbook_dir }}/../docker/compose/docker-compose.prod.yml"
+    dest:  "{{ smartmarket_app_dir }}/docker/compose/docker-compose.prod.yml"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode:  "0640"
+  notify: Reload and restart smartmarket
+  tags: smartmarket, compose
+
+
+# ---------------------------------------------------------------------------
+# 3. Deploy initdb bootstrap scripts
+# ---------------------------------------------------------------------------
+# These scripts run once when the PostgreSQL data volume is first initialised.
+# They are NOT a migration system. Schema migrations are owned by the
+# pipeline layer. The scripts are deployed read-only as a safety measure.
+
+- name: Deploy initdb bootstrap script
+  ansible.builtin.copy:
+    src:   "{{ playbook_dir }}/../docker/postgres/initdb/01-roles.sh"
+    dest:  "{{ smartmarket_app_dir }}/docker/postgres/initdb/01-roles.sh"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode:  "0550"
+  notify: Reload and restart smartmarket
+  tags: smartmarket, initdb
+
+
+# ---------------------------------------------------------------------------
+# 4. Deploy .env from Ansible Vault
+# ---------------------------------------------------------------------------
+# The .env file is templated from vault variables and deployed with mode 600.
+# It is the only file on the server that contains plaintext credentials.
+#
+# Important: this file is deployment plumbing, not a secrets vault. It is
+# readable by any process running as the deploy user or root. Credentials are
+# also visible via 'docker inspect' and /proc/<pid>/environ. This is an
+# accepted limitation of the Docker Compose deployment model.
+#
+# The .env file is NEVER committed to the repository. It exists only on the
+# server and in Ansible Vault (encrypted source of truth).
+
+- name: Deploy .env from vault variables
+  ansible.builtin.template:
+    src:   env.j2
+    dest:  "{{ smartmarket_app_dir }}/.env"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode:  "0600"
+  notify: Reload and restart smartmarket
+  # no_log: true — omitted intentionally. The template renders only variable
+  # names and structure, not the values themselves, in Ansible's diff output.
+  # If you run with --diff, be aware that changed .env content will be shown.
+  # Use --no-diff when rotating credentials in production.
+  tags: smartmarket, env
+
+
+# ---------------------------------------------------------------------------
+# 5. Deploy systemd service unit
+# ---------------------------------------------------------------------------
+
+- name: Deploy smartmarket systemd service unit
+  ansible.builtin.template:
+    src:   smartmarket.service.j2
+    dest:  /etc/systemd/system/smartmarket.service
+    owner: root
+    group: root
+    mode:  "0644"
+  notify: Reload and restart smartmarket
+  tags: smartmarket, systemd
+
+- name: Enable smartmarket service (start on boot)
+  ansible.builtin.systemd:
+    name:          smartmarket
+    enabled:       true
+    daemon_reload: true
+  tags: smartmarket, systemd
+
+
+# ---------------------------------------------------------------------------
+# 6. Start stack and verify health
+# ---------------------------------------------------------------------------
+
+- name: Start smartmarket service
+  ansible.builtin.systemd:
+    name:  smartmarket
+    state: started
+  tags: smartmarket, start
+
+- name: Wait for PostgreSQL healthcheck to pass
+  ansible.builtin.command:
+    cmd: >
+      docker inspect
+        --format='{{ '{{' }}.State.Health.Status{{ '}}' }}'
+        smartmarket_postgres
+  register: pg_health
+  until:    pg_health.stdout == 'healthy'
+  retries:  20
+  delay:    5
+  changed_when: false
+  tags: smartmarket, verify
+
+- name: Run PostgreSQL connectivity smoke test
+  ansible.builtin.command:
+    cmd: >
+      docker exec smartmarket_postgres
+        psql -U {{ postgres_user }} -d {{ postgres_db }}
+        -c "SELECT version();"
+        --no-align --tuples-only --quiet
+  register:     pg_version_check
+  changed_when: false
+  tags: smartmarket, verify
+
+- name: Assert PostgreSQL is reachable
+  ansible.builtin.assert:
+    that:
+      - "'PostgreSQL' in pg_version_check.stdout"
+    fail_msg: >
+      PostgreSQL smoke test failed.
+      Output: {{ pg_version_check.stdout }}
+      Stderr: {{ pg_version_check.stderr }}
+    success_msg: "PostgreSQL is healthy: {{ pg_version_check.stdout | trim | truncate(80) }}"
+  tags: smartmarket, verify
+
+- name: Verify application roles exist
+  ansible.builtin.command:
+    cmd: >
+      docker exec smartmarket_postgres
+        psql -U {{ postgres_user }} -d {{ postgres_db }}
+        -c "SELECT string_agg(rolname, ', ' ORDER BY rolname)
+            FROM pg_catalog.pg_roles
+            WHERE rolname IN ('smartmarket_migrations','smartmarket_pipeline');"
+        --no-align --tuples-only --quiet
+  register:     pg_roles_check
+  changed_when: false
+  tags: smartmarket, verify
+
+- name: Report role verification result
+  ansible.builtin.debug:
+    msg: "Roles present: {{ pg_roles_check.stdout | trim }}"
+  tags: smartmarket, verify
+
+- name: Deployment summary
+  ansible.builtin.debug:
+    msg:
+      - "Smart Market PostgreSQL stack is running."
+      - "Container : smartmarket_postgres"
+      - "Database  : {{ postgres_db }}"
+      - "Data dir  : {{ smartmarket_app_dir }}/  (volume: smartmarket_postgres_data)"
+      - "Service   : systemctl status smartmarket"
+      - "Admin     : ./scripts/db-connect.sh --remote deploy@{{ ansible_host | default('YOUR_VPS_IP') }}"
+  tags: smartmarket, verify

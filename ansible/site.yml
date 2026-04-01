@@ -1,0 +1,76 @@
+---
+# =============================================================================
+# Smart Market — Master Provisioning Playbook
+# =============================================================================
+# Idempotent. Safe to re-run at any time without side effects.
+#
+# PREREQUISITES
+#   - bootstrap.yml has been run against the target host
+#   - vault.yml is present and contains required secrets
+#   - SSH access works as the deploy user with key auth
+#
+# USAGE
+#   # Full provision
+#   ansible-playbook -i inventories/production/hosts.yml site.yml
+#
+#   # Dry run (no changes applied)
+#   ansible-playbook -i inventories/production/hosts.yml --check --diff site.yml
+#
+#   # Single role (using tags)
+#   ansible-playbook -i inventories/production/hosts.yml --tags docker site.yml
+#
+#   # Syntax check
+#   ansible-playbook --syntax-check -i inventories/production/hosts.yml site.yml
+#
+# ROLES APPLIED (in order)
+#   common      — apt baseline, deploy user, SSH hardening, unattended-upgrades
+#   firewall    — UFW (default-deny + SSH allow), fail2ban SSH jail
+#   docker      — Docker Engine, Compose plugin, daemon config, deploy group
+#   smartmarket — app directories, .env, Compose files, systemd service
+# =============================================================================
+
+- name: Smart Market — server provisioning
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - group_vars/all/vars.yml
+
+  pre_tasks:
+    - name: Verify target is Ubuntu
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "Ubuntu"
+        fail_msg: "Unsupported OS: {{ ansible_distribution }}. Ubuntu required."
+        success_msg: "Ubuntu {{ ansible_distribution_version }} — proceeding."
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      tags: always
+
+  roles:
+    - role: common
+      tags: common
+
+    - role: firewall
+      tags: firewall
+
+    - role: docker
+      tags: docker
+
+    - role: smartmarket
+      tags: smartmarket
+
+  post_tasks:
+    - name: Provisioning complete
+      ansible.builtin.debug:
+        msg:
+          - "Provisioning complete: {{ inventory_hostname }}"
+          - "Roles applied: common, firewall, docker, smartmarket"
+          - "PostgreSQL stack is running. Verify with:"
+          - "  systemctl status smartmarket"
+          - "  docker ps --filter name=smartmarket_postgres"
+      tags: always

@@ -1,0 +1,129 @@
+---
+# =============================================================================
+# Role: firewall
+# =============================================================================
+# Host firewall and intrusion prevention for Smart Market servers.
+#
+# Responsibilities:
+#   - Install and configure UFW (Uncomplicated Firewall)
+#     * Default policy: deny all inbound
+#     * Explicit allow: SSH port only
+#   - Install and configure fail2ban
+#     * SSH jail: bans IPs after repeated failed auth attempts
+#
+# Dependencies: none (ansible.builtin only)
+#
+# No Galaxy dependencies. UFW is driven via the CLI using ansible.builtin.command
+# with explicit changed_when conditions derived from UFW's stdout output.
+#
+# Docker + UFW interaction (important)
+# -------------------------------------
+# Docker adds its own iptables rules (DOCKER, DOCKER-USER chains) which take
+# effect BEFORE UFW's INPUT chain for traffic destined to containers. This
+# means a published container port can be reachable even if UFW would block it.
+# In Phase 1-2, no containers publish ports publicly so this is not an issue.
+# In Phase 3, when the smartmarket role deploys Compose services:
+#   - Do NOT publish Postgres publicly (already by design)
+#   - Review the Docker + UFW interaction notes in docs/deploy-production.md
+# =============================================================================
+
+
+# ---------------------------------------------------------------------------
+# UFW
+# ---------------------------------------------------------------------------
+
+- name: Install UFW
+  ansible.builtin.apt:
+    name:  ufw
+    state: present
+  tags: ufw
+
+# UFW CLI output patterns for changed_when:
+#   ufw default deny incoming  → "Default incoming policy changed to 'deny'\n..."
+#                                 (reported even if policy was already 'deny',
+#                                  so we use changed_when: false — the policy
+#                                  is effectively a no-op if already set)
+#   ufw allow PORT/tcp         → "Rules updated\nRules updated (v6)"  (added)
+#                              → "Skipping adding existing rule"       (no change)
+#   ufw --force enable         → "Firewall is active..."
+#                                 (no distinct message for already-active)
+
+- name: Set UFW default incoming policy to deny
+  ansible.builtin.command: ufw default deny incoming
+  changed_when: false
+  # UFW applies the policy unconditionally and gives no "already set" signal.
+  # The operation is idempotent in effect: setting deny when already deny changes nothing.
+  tags: ufw
+
+- name: Set UFW default outgoing policy to allow
+  ansible.builtin.command: ufw default allow outgoing
+  changed_when: false
+  tags: ufw
+
+- name: Allow SSH through UFW (port {{ ssh_port }}/tcp)
+  ansible.builtin.command: "ufw allow {{ ssh_port }}/tcp comment 'SSH'"
+  register: ufw_ssh_rule
+  # "Rules updated" appears when a new rule is added.
+  # "Skipping adding existing rule" appears when the rule already exists.
+  changed_when: "'Rules updated' in ufw_ssh_rule.stdout"
+  tags: ufw
+
+- name: Check UFW current status
+  ansible.builtin.command: ufw status
+  register: ufw_current_status
+  changed_when: false
+  tags: ufw
+
+- name: Enable UFW
+  ansible.builtin.command: ufw --force enable
+  when: "'Status: active' not in ufw_current_status.stdout"
+  # --force suppresses the interactive "y/n" prompt.
+  # Only runs if UFW is not already active.
+  tags: ufw
+
+- name: Verify UFW is active after enabling
+  ansible.builtin.command: ufw status verbose
+  register: ufw_final_status
+  changed_when: false
+  tags: ufw
+
+- name: Assert UFW is active
+  ansible.builtin.assert:
+    that:
+      - "'Status: active' in ufw_final_status.stdout"
+    fail_msg: "UFW is not active after enable attempt. Check 'ufw status' on the host."
+    success_msg: "UFW is active."
+  tags: ufw
+
+
+# ---------------------------------------------------------------------------
+# fail2ban
+# ---------------------------------------------------------------------------
+# fail2ban watches auth logs and bans IPs that exceed the configured failed
+# attempt threshold. Configured for the SSH jail only at this stage.
+#
+# Ubuntu 24.04 uses systemd for journald, so backend = systemd is required
+# (file-based log watching does not work reliably with journald).
+
+- name: Install fail2ban
+  ansible.builtin.apt:
+    name:  fail2ban
+    state: present
+  tags: fail2ban
+
+- name: Deploy fail2ban local jail configuration
+  ansible.builtin.template:
+    src:   jail.local.j2
+    dest:  /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode:  "0644"
+  notify: Restart fail2ban
+  tags: fail2ban
+
+- name: Enable and start fail2ban service
+  ansible.builtin.service:
+    name:    fail2ban
+    state:   started
+    enabled: true
+  tags: fail2ban

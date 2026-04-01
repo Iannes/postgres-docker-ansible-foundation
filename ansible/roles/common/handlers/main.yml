@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# Role: common — Handlers
+# =============================================================================
+
+- name: Restart sshd
+  ansible.builtin.service:
+    name:  sshd
+    state: restarted
+  # CAUTION: If this handler fires and the new SSH config has an error, your
+  # current session may survive but new connections will fail.
+  # Always validate with --check --diff and test the config manually before
+  # applying: sudo sshd -t

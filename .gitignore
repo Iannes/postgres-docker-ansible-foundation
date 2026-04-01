@@ -1,0 +1,74 @@
+# =============================================================================
+# Smart Market — Git Ignore Rules
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Secrets and local environment configuration
+# NEVER commit real credentials. Use env/.env.example as the committed template.
+# ---------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+
+# Ansible Vault password file (Phase 2+). Store in a password manager instead.
+.vault_pass
+.vault_password
+*.vault_pass
+
+# ---------------------------------------------------------------------------
+# Backup files
+# Backups contain production data and must never be committed.
+# ---------------------------------------------------------------------------
+backups/
+*.dump
+*.pgdump
+*.sql.gz
+*.sql.bz2
+
+# ---------------------------------------------------------------------------
+# Editor and OS artifacts
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Desktop.ini
+
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# ---------------------------------------------------------------------------
+# Python (if any tooling scripts are added)
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---------------------------------------------------------------------------
+# Ansible (Phase 2+)
+# Do not ignore ansible/ itself — only runtime artifacts, secrets, and retry files.
+# ---------------------------------------------------------------------------
+*.retry
+
+# The real vault file is encrypted but must never be committed.
+# vault.yml.example (the template with placeholders) IS committed.
+ansible/group_vars/all/vault.yml
+
+# Production inventory hosts file contains the server IP (via vault var).
+# The file itself is committed; it references vault_server_ip for the actual IP.
+# If you ever hardcode the IP directly in hosts.yml, add it here instead.
+
+# ---------------------------------------------------------------------------
+# Temporary files
+# ---------------------------------------------------------------------------
+*.tmp
+*.bak
+*.orig

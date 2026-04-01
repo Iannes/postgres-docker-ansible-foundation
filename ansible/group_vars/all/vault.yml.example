@@ -1,0 +1,47 @@
+---
+# =============================================================================
+# Smart Market — Ansible Vault Template
+# =============================================================================
+# This file is a COMMITTED TEMPLATE showing the structure of the real vault.
+# It contains only placeholder values. The real vault is never committed.
+#
+# To create the real vault:
+#   ansible-vault create ansible/group_vars/all/vault.yml
+#
+# The vault editor opens. Paste the content below with real values filled in.
+# See docs/secrets-management.md for the full workflow.
+#
+# To edit the vault later:
+#   ansible-vault edit ansible/group_vars/all/vault.yml
+#
+# To run a playbook with the vault:
+#   ansible-playbook ... --vault-password-file ~/.vault_pass site.yml
+#   ansible-playbook ... --ask-vault-pass site.yml
+# =============================================================================
+
+# IP address of the production VPS.
+# Keeping this in the vault avoids committing your server's IP to the repo,
+# which reduces its exposure in version control history and public repos.
+vault_server_ip: "203.0.113.1"   # replace with actual VPS IP
+
+# SSH public key for the deploy user.
+# Generate a dedicated key pair for this server:
+#   ssh-keygen -t ed25519 -f ~/.ssh/smartmarket_deploy -C "smartmarket deploy"
+# Then paste the PUBLIC key (contents of ~/.ssh/smartmarket_deploy.pub) here.
+vault_deploy_ssh_pubkey: "ssh-ed25519 AAAAC3... your-deploy-key-here"
+
+# =============================================================================
+# Phase 3 — Smart Market deployment secrets
+# =============================================================================
+# Database credentials deployed to /opt/smartmarket/.env via the smartmarket
+# Ansible role. All passwords must be unique and randomly generated.
+# Generate with: openssl rand -base64 32
+
+# PostgreSQL superuser password (for operator access and bootstrap).
+vault_postgres_password: "CHANGEME_openssl_rand_base64_32"
+
+# Password for smartmarket_migrations role (DDL: used by migration runner).
+vault_migrations_password: "CHANGEME_openssl_rand_base64_32"
+
+# Password for smartmarket_pipeline role (DML: used by the pipeline at runtime).
+vault_pipeline_password: "CHANGEME_openssl_rand_base64_32"

@@ -1,0 +1,33 @@
+{# =============================================================================
+   Docker Daemon Configuration — /etc/docker/daemon.json
+   Managed by Ansible (role: docker). Do not edit manually.
+
+   Key decisions documented here; see also deploy-production.md:
+
+   log-driver / log-opts
+     Global default for all containers. Services may override per-container.
+     10 MB / 3 files matches the Compose-level config in docker-compose.yml.
+
+   live-restore
+     Keeps running containers alive when the Docker daemon is restarted (e.g.
+     after a daemon.json change or Docker upgrade). Critical for pipeline uptime.
+
+   No "hosts" key
+     Docker defaults to unix socket (/var/run/docker.sock) only.
+     Never add tcp://0.0.0.0:2375 — that exposes the API without auth.
+
+   No "iptables": false
+     Docker manages its own iptables chains for container networking.
+     Disabling breaks container networking. See deploy-production.md for the
+     Docker + UFW interaction and the DOCKER-USER chain mitigation.
+============================================================================= #}
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  },
+  "live-restore": true{% if docker_data_root is defined %},
+  "data-root": "{{ docker_data_root }}"{% endif %}
+
+}

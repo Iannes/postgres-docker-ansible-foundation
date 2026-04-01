@@ -1,0 +1,23 @@
+---
+# =============================================================================
+# Role: smartmarket — Handlers
+# =============================================================================
+# A single handler covers all change events: systemd unit changes, .env
+# rotation, and Compose file updates. This always does a daemon-reload before
+# restarting to ensure any unit file changes are picked up. The daemon-reload
+# is a no-op if the unit file hasn't changed, so this is safe and idempotent.
+#
+# The service uses 'restarted' (stop then start) rather than 'reloaded'
+# because Docker Compose stacks do not support in-place config reload.
+# A restart = docker compose stop + docker compose up --detach --wait.
+#
+# Volume safety: ExecStop in the unit file uses 'docker compose stop', not
+# 'docker compose down'. The named volume (smartmarket_postgres_data) is
+# never touched by a service restart. Data persists through all restarts.
+# =============================================================================
+
+- name: Reload and restart smartmarket
+  ansible.builtin.systemd:
+    name:          smartmarket
+    state:         restarted
+    daemon_reload: true

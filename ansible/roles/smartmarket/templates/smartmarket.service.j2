@@ -1,0 +1,91 @@
+# =============================================================================
+# Smart Market — systemd Service Unit
+# /etc/systemd/system/smartmarket.service
+# =============================================================================
+# Managed by Ansible (role: smartmarket). Do not edit manually.
+# Changes will be overwritten on the next Ansible run.
+#
+# Design notes
+# ------------
+# Type=oneshot with RemainAfterExit=yes is the standard pattern for a managed
+# Docker Compose stack. The ExecStart command detaches after all containers
+# pass their healthchecks (--wait flag). systemd then marks the unit as
+# "active (exited)" — which is correct; the actual processes are Docker
+# containers managed by the Docker daemon, not by this unit directly.
+#
+# Boot behaviour
+# --------------
+# docker compose up --wait blocks until the PostgreSQL healthcheck passes.
+# On first boot with an empty volume, this includes the initdb run (bootstrap
+# scripts). The healthcheck start_period (30s) covers this. Total first-boot
+# startup: approximately 30–60 seconds depending on image pull status.
+# Subsequent starts: approximately 5–15 seconds.
+#
+# Volume safety
+# -------------
+# ExecStop uses 'docker compose stop', NOT 'docker compose down'.
+# 'stop' halts containers and preserves volumes, networks, and configuration.
+# 'down' would remove containers and networks (though not named volumes).
+# Using 'stop' is the safer choice and makes 'start' idempotent.
+# To fully tear down (e.g. before a volume reset), run manually:
+#   docker compose --project-name smartmarket \
+#     -f {{ smartmarket_app_dir }}/docker/compose/docker-compose.yml stop
+#   docker volume rm smartmarket_postgres_data   # DESTRUCTIVE
+#
+# Restart behaviour
+# -----------------
+# container restart policy (unless-stopped in docker-compose.yml) handles
+# individual container crashes without systemd involvement. Restart=on-failure
+# here handles the rare case where 'docker compose up' itself fails at boot
+# (e.g. Docker not ready yet). RestartSec gives Docker time to start.
+# =============================================================================
+
+[Unit]
+Description=Smart Market PostgreSQL Stack
+Documentation=file://{{ smartmarket_app_dir }}/docker/compose/docker-compose.yml
+
+# Ensure Docker and the network are available before starting.
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+User={{ deploy_user }}
+Group={{ deploy_user }}
+WorkingDirectory={{ smartmarket_app_dir }}
+
+# Start: bring up the stack and wait for all healthchecks to pass.
+# --wait requires Docker Compose v2.2+, which is satisfied by the Docker apt repo.
+# If --wait causes issues (e.g. very long healthcheck), remove it and let
+# the service start in the background; monitor health via 'docker ps'.
+ExecStart=/usr/bin/docker compose \
+  --project-name smartmarket \
+  --env-file {{ smartmarket_app_dir }}/.env \
+  -f {{ smartmarket_app_dir }}/docker/compose/docker-compose.yml \
+  -f {{ smartmarket_app_dir }}/docker/compose/docker-compose.prod.yml \
+  up --detach --wait
+
+# Stop: gracefully stop containers. Does NOT remove the volume.
+# Omitting -v (volumes) and not using 'down' is intentional.
+ExecStop=/usr/bin/docker compose \
+  --project-name smartmarket \
+  --env-file {{ smartmarket_app_dir }}/.env \
+  -f {{ smartmarket_app_dir }}/docker/compose/docker-compose.yml \
+  stop
+
+# Restart the unit if ExecStart fails (e.g. race condition at boot time).
+# Does not apply to container crashes — those are handled by Docker's own
+# restart policy (unless-stopped in docker-compose.yml).
+Restart=on-failure
+RestartSec=15s
+
+# Increase the timeout to account for healthcheck start_period (30s) plus
+# healthcheck retries (5 × 10s = 50s) = 80s total. Add margin.
+TimeoutStartSec=120s
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target

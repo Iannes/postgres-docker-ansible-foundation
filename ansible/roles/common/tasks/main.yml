@@ -1,0 +1,141 @@
+---
+# =============================================================================
+# Role: common
+# =============================================================================
+# OS baseline for Smart Market servers.
+#
+# Responsibilities:
+#   - Install a minimal set of useful packages
+#   - Ensure the deploy user exists with correct groups and home
+#   - Configure SSH hardening via a drop-in config file
+#   - Configure unattended security upgrades
+#
+# SSH hardening uses /etc/ssh/sshd_config.d/99-hardened.conf (a drop-in file)
+# rather than replacing /etc/ssh/sshd_config. This is safer and survives
+# Ubuntu package updates that might modify the base sshd_config.
+# =============================================================================
+
+
+# ---------------------------------------------------------------------------
+# Package baseline
+# ---------------------------------------------------------------------------
+
+- name: Install baseline packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - vim
+      - htop
+      - ca-certificates
+      - gnupg
+      - apt-transport-https
+      - unattended-upgrades
+      - apt-listchanges
+      - python3-apt       # required for apt modules to work reliably
+    state: present
+    update_cache: false   # apt cache already updated in site.yml pre_tasks
+  tags: packages
+
+
+# ---------------------------------------------------------------------------
+# Deploy user
+# ---------------------------------------------------------------------------
+# The deploy user may already exist (created by bootstrap.yml).
+# These tasks are idempotent and safe to re-run.
+
+- name: Ensure deploy user exists
+  ansible.builtin.user:
+    name:        "{{ deploy_user }}"
+    shell:       /bin/bash
+    create_home: true
+    state:       present
+    comment:     "Smart Market deploy user (Ansible-managed)"
+  tags: users
+
+- name: Ensure deploy user is in the sudo group
+  ansible.builtin.user:
+    name:   "{{ deploy_user }}"
+    groups: sudo
+    append: true
+  tags: users
+
+- name: Ensure .ssh directory exists for deploy user
+  ansible.builtin.file:
+    path:  "/home/{{ deploy_user }}/.ssh"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode:  "0700"
+    state: directory
+  tags: users
+
+
+# ---------------------------------------------------------------------------
+# SSH hardening
+# ---------------------------------------------------------------------------
+# Drop-in file: /etc/ssh/sshd_config.d/99-hardened.conf
+# Overrides security-relevant defaults without touching the base sshd_config.
+# The '99-' prefix ensures our settings load last and take precedence.
+#
+# Key settings applied (see template for full list):
+#   PermitRootLogin no
+#   PasswordAuthentication no
+#   PubkeyAuthentication yes
+#   AllowUsers {{ ssh_allowed_users | join(' ') }}
+#   MaxAuthTries {{ ssh_max_auth_tries }}
+#   LoginGraceTime {{ ssh_login_grace_time }}
+
+- name: Ensure sshd_config.d directory exists
+  ansible.builtin.file:
+    path:  /etc/ssh/sshd_config.d
+    owner: root
+    group: root
+    mode:  "0755"
+    state: directory
+  tags: ssh
+
+- name: Deploy SSH hardening drop-in config
+  ansible.builtin.template:
+    src:    sshd_hardened.conf.j2
+    dest:   /etc/ssh/sshd_config.d/99-hardened.conf
+    owner:  root
+    group:  root
+    mode:   "0644"
+    validate: /usr/sbin/sshd -t -f /dev/null -o "Include /etc/ssh/sshd_config.d/99-hardened.conf"
+  notify: Restart sshd
+  tags: ssh
+
+# SAFETY NOTE: sshd is restarted via a handler at the END of the play, not
+# immediately. If any task fails before the handler runs, sshd is not
+# restarted and the old config remains active. Test with --check --diff first.
+
+
+# ---------------------------------------------------------------------------
+# Unattended upgrades
+# ---------------------------------------------------------------------------
+# Applies security updates automatically. Does NOT perform dist-upgrades or
+# upgrade PostgreSQL (which is pinned and managed manually per docs/upgrade-postgres.md).
+
+- name: Deploy unattended-upgrades main configuration
+  ansible.builtin.template:
+    src:   50unattended-upgrades.j2
+    dest:  /etc/apt/apt.conf.d/50unattended-upgrades
+    owner: root
+    group: root
+    mode:  "0644"
+  tags: upgrades
+
+- name: Deploy apt periodic trigger for unattended-upgrades
+  ansible.builtin.template:
+    src:   20auto-upgrades.j2
+    dest:  /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode:  "0644"
+  tags: upgrades
+
+- name: Ensure unattended-upgrades service is enabled and running
+  ansible.builtin.service:
+    name:    unattended-upgrades
+    state:   started
+    enabled: true
+  tags: upgrades

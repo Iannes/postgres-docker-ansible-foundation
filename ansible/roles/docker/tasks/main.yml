@@ -1,0 +1,184 @@
+---
+# =============================================================================
+# Role: docker
+# =============================================================================
+# Installs Docker Engine and Compose plugin from the official Docker apt
+# repository. Configures daemon defaults and adds the deploy user to the
+# docker group.
+#
+# Responsibilities:
+#   - Remove old/conflicting Docker packages (if any)
+#   - Add Docker's official GPG key and apt repository
+#   - Install docker-ce, docker-ce-cli, containerd.io, and plugins
+#   - Add the deploy user to the docker group (no-sudo container management)
+#   - Deploy daemon.json (log rotation, live-restore, no TCP socket)
+#   - Enable and start Docker service
+#
+# Security decisions:
+#   - No TCP socket. Docker communicates via unix socket only:
+#     /var/run/docker.sock. This prevents remote API access.
+#   - No 'hosts' key in daemon.json. Docker defaults to unix socket.
+#     Adding tcp://0.0.0.0:2375 would be a critical misconfiguration.
+#   - live-restore: true keeps containers running during daemon restart.
+#     This is important during Docker daemon upgrades to avoid pipeline downtime.
+#   - Log rotation set at daemon level as a global default. Individual
+#     Compose services can override with their own logging config.
+#
+# Docker + UFW interaction:
+#   Docker manages its own iptables rules. Container ports published to the
+#   host are accessible even if UFW would block them via the INPUT chain.
+#   This is NOT an issue in Phase 1/2 (no ports published publicly).
+#   Phase 3 (smartmarket role) must not publish Postgres publicly.
+#   See docs/deploy-production.md for the full note and mitigation approach.
+# =============================================================================
+
+
+# ---------------------------------------------------------------------------
+# Remove conflicting packages
+# ---------------------------------------------------------------------------
+# Old Docker installations (docker.io, docker-compose v1, etc.) conflict with
+# the official Docker Engine packages. Remove them if present.
+
+- name: Remove conflicting Docker package names (if present)
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+      - docker-doc
+      - podman-docker
+      - containerd
+      - runc
+    state: absent
+    purge:  false   # keep configs; these may not be installed at all
+  tags: docker
+
+
+# ---------------------------------------------------------------------------
+# Docker apt repository
+# ---------------------------------------------------------------------------
+
+- name: Ensure keyrings directory exists
+  ansible.builtin.file:
+    path:  /usr/share/keyrings
+    owner: root
+    group: root
+    mode:  "0755"
+    state: directory
+  tags: docker
+
+- name: Download Docker GPG key
+  ansible.builtin.get_url:
+    url:      "https://download.docker.com/linux/ubuntu/gpg"
+    dest:     /usr/share/keyrings/docker.asc
+    owner:    root
+    group:    root
+    mode:     "0644"
+    checksum: "sha256:1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570"
+    # Checksum valid as of Docker's current release. Update if Docker rotates the key.
+    # To refresh: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sha256sum
+  tags: docker
+
+- name: Add Docker apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ 'amd64' if ansible_architecture == 'x86_64' else ansible_architecture }}
+      signed-by=/usr/share/keyrings/docker.asc]
+      https://download.docker.com/linux/ubuntu
+      {{ ansible_distribution_release }} stable
+    state:    present
+    filename: docker
+    update_cache: true
+  tags: docker
+
+
+# ---------------------------------------------------------------------------
+# Install Docker Engine
+# ---------------------------------------------------------------------------
+
+- name: Install Docker Engine packages
+  ansible.builtin.apt:
+    name:         "{{ docker_packages }}"
+    state:        present
+    update_cache: false   # already updated by apt_repository above
+  notify: Restart docker
+  tags: docker
+
+
+# ---------------------------------------------------------------------------
+# Deploy group membership
+# ---------------------------------------------------------------------------
+# Adding the deploy user to the docker group allows running docker commands
+# without sudo. This is a deliberate privilege — docker group membership
+# is effectively equivalent to root on the host (containers can mount
+# host filesystems). It is acceptable here because:
+#   - The deploy user is the sole administrative account
+#   - The deploy user already has full passwordless sudo
+#   - Requiring sudo for every docker command adds friction without security gain
+
+- name: Add deploy user to docker group
+  ansible.builtin.user:
+    name:   "{{ deploy_user }}"
+    groups: docker
+    append: true
+  tags: docker
+
+
+# ---------------------------------------------------------------------------
+# Docker daemon configuration
+# ---------------------------------------------------------------------------
+
+- name: Deploy Docker daemon configuration
+  ansible.builtin.template:
+    src:   daemon.json.j2
+    dest:  /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode:  "0644"
+  notify: Restart docker
+  tags: docker
+
+
+# ---------------------------------------------------------------------------
+# Service management
+# ---------------------------------------------------------------------------
+
+- name: Enable and start Docker service
+  ansible.builtin.service:
+    name:    docker
+    state:   started
+    enabled: true
+  tags: docker
+
+- name: Enable and start containerd service
+  ansible.builtin.service:
+    name:    containerd
+    state:   started
+    enabled: true
+  tags: docker
+
+
+# ---------------------------------------------------------------------------
+# Verify installation
+# ---------------------------------------------------------------------------
+
+- name: Verify docker CLI is functional
+  ansible.builtin.command: docker --version
+  register: docker_version_out
+  changed_when: false
+  tags: docker
+
+- name: Show Docker version
+  ansible.builtin.debug:
+    msg: "{{ docker_version_out.stdout }}"
+  tags: docker
+
+- name: Verify docker compose plugin is available
+  ansible.builtin.command: docker compose version
+  register: compose_version_out
+  changed_when: false
+  tags: docker
+
+- name: Show Docker Compose version
+  ansible.builtin.debug:
+    msg: "{{ compose_version_out.stdout }}"
+  tags: docker

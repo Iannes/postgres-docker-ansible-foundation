@@ -1,0 +1,95 @@
+# =============================================================================
+# Smart Market — PostgreSQL Base Service Definition
+# =============================================================================
+# This is the canonical service definition, shared across all environments.
+# Extend it with an overlay file; do not modify this file per-environment.
+#
+#   Local dev  : docker-compose.override.yml (loaded automatically)
+#   Production : docker-compose.prod.yml (explicit -f flag, Phase 3)
+#
+# Network model
+# -------------
+# No ports are published here. PostgreSQL listens on all interfaces *within*
+# the container — this is intentional. Docker networking (smartmarket_net)
+# is the isolation boundary; only containers on that network can reach the
+# database. pg_hba.conf enforces scram-sha-256 for all TCP connections.
+#
+# Do NOT restrict listen_addresses to 'localhost'. Sibling containers (e.g.
+# the pipeline process) connect by service name, which requires the DB to
+# accept TCP connections on the container's internal interface.
+#
+# TLS
+# ---
+# PostgreSQL TLS is not configured. All access is through private Docker
+# networking (sibling containers) or SSH tunnels (operators). This is
+# acceptable while that access model is maintained. Revisit if the network
+# topology changes or a replica is added.
+#
+# Secrets note
+# ------------
+# Compose environment variables are deployment plumbing, not a secure vault.
+# They are visible via 'docker inspect' and /proc. Do not treat .env as
+# secure storage. In production, Ansible Vault generates and deploys the
+# .env file to the server (Phase 2+).
+# =============================================================================
+
+services:
+  postgres:
+    image: "postgres:${POSTGRES_IMAGE_TAG:-16.3}"
+    container_name: smartmarket_postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB:                    "${POSTGRES_DB}"
+      POSTGRES_USER:                  "${POSTGRES_USER}"
+      POSTGRES_PASSWORD:              "${POSTGRES_PASSWORD}"
+      # scram-sha-256 for all TCP (host) connections. Do not weaken to md5 or trust.
+      POSTGRES_HOST_AUTH_METHOD:      "${POSTGRES_HOST_AUTH_METHOD:-scram-sha-256}"
+      # These are consumed by docker/postgres/initdb/01-roles.sh on first volume
+      # initialisation only. They are not used at runtime after that.
+      SMARTMARKET_MIGRATIONS_PASSWORD: "${SMARTMARKET_MIGRATIONS_PASSWORD}"
+      SMARTMARKET_PIPELINE_PASSWORD:  "${SMARTMARKET_PIPELINE_PASSWORD}"
+
+    volumes:
+      # Named volume for durable data. Prefer named volumes over bind mounts:
+      # avoids host filesystem permission drift, works identically across
+      # Linux and macOS, and is portable to production with no changes.
+      - postgres_data:/var/lib/postgresql/data
+      # Bootstrap scripts: run once on first volume initialisation.
+      # Treat as infrastructure bootstrap, not a migration system.
+      # Relative path is resolved from this file's directory.
+      - ../postgres/initdb:/docker-entrypoint-initdb.d:ro
+
+    networks:
+      - smartmarket_net
+
+    healthcheck:
+      # Runs inside the container via unix socket — no password required.
+      # $$ prevents Compose from interpolating the variable; the container
+      # shell expands it from the container's own environment instead.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    logging:
+      # json-file with rotation. Adjust max-size/max-file if log volume is high.
+      # On a data pipeline, query logging (log_min_duration_statement) can be
+      # verbose; monitor log growth and tune as needed.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Named volume. 'docker system df -v' shows current disk usage.
+# To inspect the physical path on the host: docker volume inspect smartmarket_postgres_data
+volumes:
+  postgres_data:
+    name: smartmarket_postgres_data
+
+# Internal bridge network. No external connectivity unless a port is explicitly published.
+networks:
+  smartmarket_net:
+    name: smartmarket_net
+    driver: bridge

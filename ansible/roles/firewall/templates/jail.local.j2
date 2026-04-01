@@ -1,0 +1,55 @@
+# =============================================================================
+# fail2ban — Local Jail Configuration
+# /etc/fail2ban/jail.local
+# =============================================================================
+# Managed by Ansible (role: firewall). Do not edit manually.
+#
+# jail.local overrides jail.conf without modifying the package-managed file.
+# This file survives fail2ban package upgrades cleanly.
+# =============================================================================
+
+[DEFAULT]
+# ---- Timing ----------------------------------------------------------------
+
+# Number of failed attempts within findtime before banning.
+maxretry  = {{ fail2ban_maxretry }}
+
+# Duration (seconds) an offending IP remains banned.
+bantime   = {{ fail2ban_bantime }}
+
+# Time window (seconds) in which failures are counted.
+findtime  = {{ fail2ban_findtime }}
+
+# ---- Backend ---------------------------------------------------------------
+# Ubuntu 24.04 uses systemd/journald. The 'systemd' backend reads from
+# journald directly and does not require log files to exist on disk.
+backend   = systemd
+
+# ---- Notifications ---------------------------------------------------------
+# No email notifications by default (no MTA configured). Add a destemail and
+# uncomment the action line if you set up a mail relay.
+# destemail = ops@example.com
+# action    = %(action_mwl)s   # ban + send mail with log lines
+
+# Default ban action: drop packets from banned IP (no RST sent — cleaner than reject).
+banaction = iptables-multiport
+
+
+# ---------------------------------------------------------------------------
+# SSH Jail
+# ---------------------------------------------------------------------------
+
+[sshd]
+enabled  = true
+port     = {{ ssh_port }}
+
+# Filter uses the built-in sshd filter (/etc/fail2ban/filter.d/sshd.conf).
+# No custom filter is needed.
+filter   = sshd
+
+# 'mode = aggressive' catches more patterns (e.g. invalid user, disconnected).
+# Use 'normal' if you see false positives on legitimate connections.
+mode     = aggressive
+
+# Log path is not needed with systemd backend; journald provides the logs.
+# logpath  = %(sshd_log)s  ← only needed for file-based backend

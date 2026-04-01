@@ -1,0 +1,29 @@
+# =============================================================================
+# Smart Market — Local Development Overrides
+# =============================================================================
+# Docker Compose merges this file with docker-compose.yml automatically when
+# both files are present in the same directory, or when passed with -f.
+#
+# This file is for LOCAL DEVELOPMENT ONLY. It must not be used in production.
+# It is safe to commit (contains no secrets), but documents local-only intent.
+#
+# What this adds over the base:
+#
+#   ports    — Exposes PostgreSQL on 127.0.0.1 only, never 0.0.0.0.
+#              Allows local tooling (psql, DBeaver, TablePlus) to connect
+#              without going through docker exec. The explicit 127.0.0.1 bind
+#              is required — omitting it defaults to 0.0.0.0 on some Docker
+#              versions, which would expose the port on all host interfaces.
+#
+#   restart  — Relaxed to 'on-failure' for local dev. 'unless-stopped' (the
+#              base default) is appropriate for production but inconvenient
+#              when iterating locally.
+# =============================================================================
+
+services:
+  postgres:
+    ports:
+      # Format: "HOST_ADDR:HOST_PORT:CONTAINER_PORT"
+      # 127.0.0.1 bind is non-negotiable — never use 0.0.0.0 or omit the address.
+      - "127.0.0.1:${POSTGRES_LOCAL_PORT:-5432}:5432"
+    restart: on-failure

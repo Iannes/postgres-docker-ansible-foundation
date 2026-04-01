@@ -1,0 +1,12 @@
+---
+# =============================================================================
+# Role: docker — Handlers
+# =============================================================================
+
+- name: Restart docker
+  ansible.builtin.service:
+    name:  docker
+    state: restarted
+  # live-restore: true in daemon.json means running containers are NOT stopped
+  # when the Docker daemon restarts. This makes daemon restarts (e.g. after
+  # daemon.json changes) safe during production operation.
